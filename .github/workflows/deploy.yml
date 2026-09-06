@@ -1,0 +1,60 @@
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# GITHUB_TOKEN needs to read the repo and mint a Pages deployment.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Let a running deploy finish; queue at most one behind it.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Inject Web3Forms key
+        env:
+          WEB3FORMS_KEY: ${{ secrets.WEB3FORMS_KEY }}
+        run: |
+          if [ -z "$WEB3FORMS_KEY" ]; then
+            echo "::warning title=WEB3FORMS_KEY not set::The form will fall back to opening the visitor's email client. Add the secret to send applications straight to your inbox."
+            exit 0
+          fi
+          # python, not sed: the key never reaches a shell-expanded command line.
+          python3 - <<'PY'
+          import os, pathlib
+          key = os.environ["WEB3FORMS_KEY"].strip()
+          p = pathlib.Path("index.html")
+          html = p.read_text(encoding="utf-8")
+          if "__WEB3FORMS_KEY__" not in html:
+              raise SystemExit("placeholder __WEB3FORMS_KEY__ missing from index.html")
+          p.write_text(html.replace("__WEB3FORMS_KEY__", key), encoding="utf-8")
+          print("Injected key into index.html")
+          PY
+          echo "::notice title=Form wired::Applications will POST to Web3Forms."
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: .
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
